@@ -6,6 +6,8 @@
 
 
 import Crypto.Cipher.AES as AES
+import binascii
+import six
 import struct
 
 
@@ -69,38 +71,38 @@ def b2i(s):
     res = 0
     for c in reversed(s):
         res <<= 8
-        res |= ord(c)
+        res |= (ord(c) if six.PY2 else c)
     return res
 
 
 def i2b(i):
     if i == 0:
-        return '\x00'*16
-    s = ''
+        return b'\x00'*16
+    s = b''
     while i:
-        s += chr(i & 0xff)
+        s += chr(i & 0xff) if six.PY2 else bytes([i & 0xff])
         i >>= 8
-    return s
+    return bytes(s)
 
 
 def s2i(s):
-    return b2i(s.decode('hex'))
+    return b2i(binascii.unhexlify(s))
 
 
 def i2s(i):
-    return i2b(i).encode('hex')
+    return binascii.hexlify(i2b(i))
 
 
 def le_uint32(i):
-    return struct.pack('<L', i)
+    return struct.pack(b'<L', i)
 
 
 def read_le_uint32(b):
-    return struct.unpack('<L', b[0:4])[0]
+    return struct.unpack(b'<L', b[0:4])[0]
 
 
 def le_uint64(i):
-    return struct.pack('<Q', i)
+    return struct.pack(b'<Q', i)
 
 
 def split16(s):
@@ -123,18 +125,21 @@ class AES_GCM_SIV(object):
 
     def _right_pad_to_16(self, inp):
         while len(inp) % 16 != 0:
-            inp += '\x00'
+            inp += b'\x00'
         return inp
 
     def _aes_ctr(self, key, initial_block, inp):
         block = initial_block
-        output = ''
+        output = b''
         while len(inp) > 0:
             keystream_block = AES.new(key).encrypt(block)
             block = le_uint32((read_le_uint32(block[0:4]) + 1) & 0xffffffff) + block[4:]
             todo = min(len(inp), len(keystream_block))
             for j in range(todo):
-                output += chr(ord(keystream_block[j]) ^ ord(inp[j]))
+                if six.PY2:
+                    output += chr(ord(keystream_block[j]) ^ ord(inp[j]))
+                else:
+                    output += bytes([keystream_block[j] ^ inp[j]])
             inp = inp[todo:]
         return output
 
