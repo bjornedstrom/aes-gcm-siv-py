@@ -158,20 +158,21 @@ class AES_GCM_SIV(object):
         padded_plaintext = self._right_pad_to_16(plaintext)
         padded_ad = self._right_pad_to_16(additional_data)
 
-        S_s = polyval(b2i(self.msg_auth_key),
-                      map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))
-        S_s = i2b(S_s)
-        S_s = bytearray(S_s)
-        nonce = bytearray(self.nonce)
+        # Polyval/tag calculation
+        S_s = bytearray(
+            i2b(polyval(b2i(self.msg_auth_key),
+                        map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))))
 
+        nonce = bytearray(self.nonce)
         for i in range(12):
             S_s[i] ^= nonce[i]
         S_s[15] &= 0x7f
 
         tag = AES.new(self.msg_enc_key).encrypt(bytes(S_s))
+
+        # Encrypt
         counter_block = bytearray(tag)
         counter_block[15] |= 0x80
-
         return self._aes_ctr(self.msg_enc_key, bytes(counter_block), plaintext) + bytes(tag)
 
     def decrypt(self, ciphertext, additional_data):
@@ -195,17 +196,16 @@ class AES_GCM_SIV(object):
         padded_plaintext = self._right_pad_to_16(plaintext)
         padded_ad = self._right_pad_to_16(additional_data)
 
-        #
-        S_s = polyval(b2i(self.msg_auth_key),
-                      map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))
-        S_s = i2b(S_s)
-        S_s = bytearray(S_s)
+        # Polyval/tag calculation
+        S_s = bytearray(
+            i2b(polyval(b2i(self.msg_auth_key),
+                        map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))))
         nonce = bytearray(self.nonce)
         for i in range(12):
             S_s[i] ^= nonce[i]
         S_s[15] &= 0x7f
 
-        #
+        # Check tag
         expected_tag = bytearray(AES.new(self.msg_enc_key).encrypt(bytes(S_s)))
         actual_tag = bytearray(tag)
 
