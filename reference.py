@@ -76,6 +76,9 @@ class PolyvalIUF(object):
         self._h = b2i(h)
         self._nonce = bytearray(nonce)
 
+    # TODO: update() is a bit sensitive w.r.t zero-padding, make sure
+    # it's called so there is no superfluous zero-padding added in the middle
+    # of the input due to splitting etc.
     def update(self, inp):
         def update16(inp):
             assert len(inp) == 16
