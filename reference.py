@@ -67,6 +67,39 @@ def polyval(h, xs):
     return s
 
 
+class PolyvalIUF(object):
+    """Polyval implemented as an IUF construction, specifically in the context
+    of AES-GCM_SIV."""
+
+    def __init__(self, h, nonce):
+        self._s = 0
+        self._h = b2i(h)
+        self._nonce = bytearray(nonce)
+
+    def update(self, inp):
+        def update16(inp):
+            assert len(inp) == 16
+            self._s = Field.dot(Field.add(self._s, b2i(inp)), self._h)
+
+        def split16(s):
+            return [s[i:i+16] for i in range(0, len(s), 16)]
+
+        def _right_pad_to_16(b):
+            while len(b) % 16 != 0:
+                b += b'\x00'
+            return b
+
+        for block in split16(inp):
+            update16(_right_pad_to_16(block))
+
+    def digest(self):
+        S_s = bytearray(i2b(self._s))
+        for i in range(12):
+            S_s[i] ^= self._nonce[i]
+        S_s[15] &= 0x7f
+        return S_s
+
+
 def b2i(s):
     res = 0
     for c in reversed(s):
@@ -105,10 +138,6 @@ def le_uint64(i):
     return struct.pack(b'<Q', i)
 
 
-def split16(s):
-    return [s[i:i+16] for i in range(0, len(s), 16)]
-
-
 class AES_GCM_SIV(object):
     def __init__(self, key_gen_key, nonce):
         aes_obj = AES.new(key_gen_key)
@@ -143,6 +172,33 @@ class AES_GCM_SIV(object):
             inp = inp[todo:]
         return output
 
+    def _polyval_calc(self, plaintext, additional_data):
+        # Instead of calculating S_s inline using the RFC polyval() function,
+        # we redesign polyval as an IUF "hash". The old/RFC way would be as below:
+        #
+        # """
+        # padded_plaintext = self._right_pad_to_16(plaintext)
+        # padded_ad = self._right_pad_to_16(additional_data)
+        # S_s = bytearray(
+        #     i2b(polyval(b2i(self.msg_auth_key),
+        #                 map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))))
+        # nonce = bytearray(self.nonce)
+        # for i in range(12):
+        #     S_s[i] ^= nonce[i]
+        # S_s[15] &= 0x7f
+        # assert S_s == S_s_new
+        # """
+
+        pvh = PolyvalIUF(self.msg_auth_key, self.nonce)
+        pvh.update(additional_data)
+        pvh.update(plaintext)
+
+        length_block = le_uint64(len(additional_data) * 8) + \
+                       le_uint64(len(plaintext) * 8)
+        pvh.update(length_block)
+
+        return pvh.digest()
+
     def encrypt(self, plaintext, additional_data):
         """Encrypt"""
 
@@ -152,22 +208,8 @@ class AES_GCM_SIV(object):
         if len(additional_data) > 2**36:
             raise ValueError('additional_data too large')
 
-        length_block = le_uint64(len(additional_data) * 8) + \
-                       le_uint64(len(plaintext) * 8)
-
-        padded_plaintext = self._right_pad_to_16(plaintext)
-        padded_ad = self._right_pad_to_16(additional_data)
-
         # Polyval/tag calculation
-        S_s = bytearray(
-            i2b(polyval(b2i(self.msg_auth_key),
-                        map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))))
-
-        nonce = bytearray(self.nonce)
-        for i in range(12):
-            S_s[i] ^= nonce[i]
-        S_s[15] &= 0x7f
-
+        S_s = self._polyval_calc(plaintext, additional_data)
         tag = AES.new(self.msg_enc_key).encrypt(bytes(S_s))
 
         # Encrypt
@@ -190,23 +232,11 @@ class AES_GCM_SIV(object):
         counter_block[15] |= 0x80
         plaintext = self._aes_ctr(self.msg_enc_key, bytes(counter_block), ciphertext)
 
-        length_block = le_uint64(len(additional_data) * 8) + \
-                       le_uint64(len(plaintext) * 8)
-
-        padded_plaintext = self._right_pad_to_16(plaintext)
-        padded_ad = self._right_pad_to_16(additional_data)
-
         # Polyval/tag calculation
-        S_s = bytearray(
-            i2b(polyval(b2i(self.msg_auth_key),
-                        map(b2i, split16(padded_ad) + split16(padded_plaintext) + [length_block]))))
-        nonce = bytearray(self.nonce)
-        for i in range(12):
-            S_s[i] ^= nonce[i]
-        S_s[15] &= 0x7f
+        S_s = self._polyval_calc(plaintext, additional_data)
+        expected_tag = bytearray(AES.new(self.msg_enc_key).encrypt(bytes(S_s)))
 
         # Check tag
-        expected_tag = bytearray(AES.new(self.msg_enc_key).encrypt(bytes(S_s)))
         actual_tag = bytearray(tag)
 
         xor_sum = 0
