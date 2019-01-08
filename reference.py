@@ -97,6 +97,12 @@ class PolyvalIUF(object):
 
     def digest(self):
         S_s = bytearray(i2b(self._s))
+        
+        #Check this, if not present may fail
+	    f=binascii.hexlify(S_s)
+	    if len(f)<32 : f+="00"
+	    S_s = bytearray(binascii.unhexlify(f))
+        
         for i in range(12):
             S_s[i] ^= self._nonce[i]
         S_s[15] &= 0x7f
