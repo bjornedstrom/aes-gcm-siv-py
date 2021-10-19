@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# Copyright (c) Bjorn Edstrom <be@bjrn.se> 2019
+# Copyright (c) guanlong huang <gl041188@gmail.com> 2021
 
 # Reference implementation of AES-GCM-SIV based on the IRTF draft.
 # Do not use.
